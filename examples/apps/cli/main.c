@@ -27,6 +27,7 @@
  */
 
 #include <assert.h>
+#include <string.h>
 #ifdef __linux__
 #include <signal.h>
 #include <sys/prctl.h>
@@ -37,7 +38,12 @@
 
 #include <openthread/cli.h>
 #include <openthread/diag.h>
+#include <openthread/instance.h>
 #include <openthread/tasklet.h>
+#include <openthread/tcp.h>
+#include <openthread/tcp_ext.h>
+#include <openthread/thread.h>
+#include <openthread/thread_ftd.h>
 #include <openthread/platform/logging.h>
 #include <openthread/platform/misc.h>
 
@@ -46,6 +52,8 @@
 #include "common/code_utils.hpp"
 
 #include "lib/platform/reset_util.h"
+
+void handleNetifStateChanged(uint32_t aFlags, void *aContext);
 
 /**
  * Initializes the CLI app.
@@ -99,10 +107,164 @@ static const otCliCommand kCommands[] = {
 };
 #endif // OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
 
+static otTcpListener tcpListener;
+otInstance          *instance;
+
+otTcpEndpoint endpoints[10];
+size_t        n_endpoints = 0;
+
+typedef struct endpoint_state
+{
+    size_t                  n_read;
+    size_t                  n_received;
+    size_t                  n_sent;
+    size_t                  n_commited;
+    size_t                  fin_received;
+    size_t                  fin_sent;
+    size_t                  bytes_available;
+    otTcpCircularSendBuffer send_buffer;
+    uint8_t                 internal_send_buffer[128];
+    uint8_t                 _PADDING[128];
+    uint8_t                 internal_receive_buffer[128];
+} endpoint_state_t;
+
+endpoint_state_t            endpoints_states[10];
+otTcpEndpointInitializeArgs endpoints_args[10];
+
+otTcpListenerInitializeArgs listenerArgs;
+
+void tcp_established(otTcpEndpoint *endpoint)
+{
+    // noop
+}
+
+void tcp_send_done_callback(otTcpEndpoint *endpoint, otLinkedBuffer *buffer)
+{
+    // NOOP
+}
+
+void read_and_echo_bytes(otTcpEndpoint *endpoint)
+{
+    const otLinkedBuffer *buffer  = NULL;
+    size_t                written = 0;
+    endpoint_state_t     *context = (endpoint_state_t *)endpoint->mContext;
+    // otTcpReceiveContiguify(endpoint);
+    otTcpReceiveByReference(endpoint, &buffer);
+
+    otCliOutputFormat("received %d bytes: %.*s\r\n", buffer->mLength, buffer->mLength, buffer->mData);
+
+    // otCliOutputFormat("before, cicrular buffer free size = %d, contains %d bytes, start: %d: %.*s\r\n",
+    //                     otTcpCircularSendBufferGetFreeSpace(&context->send_buffer),
+    //                     context->send_buffer.mCapacityUsed, context->send_buffer.mStartIndex,
+    //                     context->send_buffer.mCapacityUsed, context->send_buffer.mDataBuffer);
+    otTcpCircularSendBufferWrite(endpoint, &context->send_buffer, buffer->mData, buffer->mLength, &written, 0);
+    // otError err = otTcpCircularSendBufferWrite(endpoint, &context->send_buffer, "hello", strlen("hello"), &written,
+    // 0);
+
+    // otCliOutputFormat("cicrular buffer err: %d, free size: %d, contains %d bytes, start: %d: %.*s\r\n", err,
+    //                     otTcpCircularSendBufferGetFreeSpace(&context->send_buffer),
+    //                     context->send_buffer.mCapacityUsed, context->send_buffer.mStartIndex,
+    //                     context->send_buffer.mCapacityUsed, context->send_buffer.mDataBuffer);
+    if (context->fin_received && written == context->bytes_available)
+    {
+        otTcpSendEndOfStream(endpoint);
+        context->fin_sent = true;
+    }
+    otTcpCommitReceive(endpoint, written, 0);
+}
+
+void tcp_forward_progress(otTcpEndpoint *endpoint, size_t aInSendBuffer, size_t aBacklog)
+{
+    endpoint_state_t *context = (endpoint_state_t *)endpoint->mContext;
+    otTcpCircularSendBufferHandleForwardProgress(&context->send_buffer, aInSendBuffer);
+    if (otTcpCircularSendBufferGetFreeSpace(&context->send_buffer) > 0 && context->bytes_available > 0 ||
+        (context->bytes_available == 0 && context->fin_received && !context->fin_sent))
+    {
+        read_and_echo_bytes(endpoint);
+    }
+}
+
+void tcp_receive_available(otTcpEndpoint *endpoint, size_t bytes_available, bool fin, size_t bytes_remaining)
+{
+    endpoint_state_t *context = (endpoint_state_t *)endpoint->mContext;
+    context->bytes_available  = bytes_available;
+    context->fin_received     = fin;
+    otCliOutputFormat("receive available\r\n");
+    read_and_echo_bytes(endpoint);
+}
+
+void tcp_disconnected(otTcpEndpoint *endpoint, otTcpDisconnectedReason reason)
+{
+    // TODO
+}
+
+#define TCP_PORT 4443
+
+otTcpIncomingConnectionAction acceptReady(otTcpListener    *aListener,
+                                          const otSockAddr *aPeer,
+                                          otTcpEndpoint   **aAcceptInto)
+{
+    otPlatLog(OT_LOG_LEVEL_CRIT, OT_LOG_REGION_CLI, "new TCP connection!\n");
+    otCliOutputFormat("New TCP connection\r\n");
+    if (n_endpoints == 10)
+        return OT_TCP_INCOMING_CONNECTION_ACTION_DEFER;
+    otTcpEndpoint    *endpoint = &endpoints[n_endpoints];
+    endpoint_state_t *context  = &endpoints_states[n_endpoints];
+    // context = endpoint index
+
+    otTcpEndpointInitializeArgs *endpointArgs = &endpoints_args[n_endpoints];
+    endpointArgs->mContext                    = (void *)context;
+    endpointArgs->mDisconnectedCallback       = &tcp_disconnected;
+    endpointArgs->mEstablishedCallback        = &tcp_established;
+    endpointArgs->mForwardProgressCallback    = &tcp_forward_progress;
+    endpointArgs->mReceiveAvailableCallback   = &tcp_receive_available;
+    endpointArgs->mSendDoneCallback           = &tcp_send_done_callback;
+    endpointArgs->mReceiveBufferSize          = sizeof(context->internal_receive_buffer);
+    endpointArgs->mReceiveBuffer              = context->internal_receive_buffer;
+
+    otTcpCircularSendBufferInitialize(&context->send_buffer, context->internal_send_buffer,
+                                      sizeof(context->internal_send_buffer));
+    otCliOutputFormat("initialized, cicrular buffer free size = %d, contains %d bytes, start: %d\r\n",
+                      otTcpCircularSendBufferGetFreeSpace(&context->send_buffer), context->send_buffer.mCapacityUsed,
+                      context->send_buffer.mStartIndex);
+    otTcpEndpointInitialize(instance, endpoint, endpointArgs);
+    *aAcceptInto = endpoint;
+    n_endpoints++;
+    return OT_TCP_INCOMING_CONNECTION_ACTION_ACCEPT;
+}
+
+void acceptDone(otTcpListener *aListener, otTcpEndpoint *aEndpoint, const otSockAddr *aPeer)
+{
+    // nothing to do, we implement echo
+    otCliOutputFormat("accept done\r\n");
+}
+
+/**
+ * Initialize TCP socket
+ */
+void initTcp(otInstance *aInstance)
+{
+    otPlatLog(OT_LOG_LEVEL_CRIT, OT_LOG_REGION_CLI, "TCP init\n");
+    otSockAddr listenSockAddr;
+
+    memset(&tcpListener, 0, sizeof(tcpListener));
+    memset(&listenSockAddr, 0, sizeof(listenSockAddr));
+
+    listenSockAddr.mPort = TCP_PORT;
+
+    listenerArgs.mAcceptDoneCallback  = &acceptDone;
+    listenerArgs.mAcceptReadyCallback = &acceptReady;
+
+    // TODO: initialize callbacks in args
+    if (!otTcpListenerInitialize(aInstance, &tcpListener, &listenerArgs))
+    {
+        // TODO
+    }
+    otTcpListen(&tcpListener, &listenSockAddr);
+}
+
 int main(int argc, char *argv[])
 {
-    otInstance *instance;
-
 #ifdef __linux__
     // Ensure we terminate this process if the
     // parent process dies.
@@ -136,6 +298,7 @@ pseudo_reset:
     assert(instance);
 
     otAppCliInit(instance);
+    initTcp(instance);
 
 #if OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     IgnoreError(otCliSetUserCommands(kCommands, OT_ARRAY_LENGTH(kCommands), instance));
