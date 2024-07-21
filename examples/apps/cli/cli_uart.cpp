@@ -290,7 +290,7 @@ static int Output(const char *aBuf, uint16_t aBufLength)
     return sent;
 }
 
-static int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments)
+extern "C" int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments)
 {
     OT_UNUSED_VARIABLE(aContext);
 
@@ -378,4 +378,16 @@ extern "C" void otAppCliInit(otInstance *aInstance)
     IgnoreError(otPlatUartEnable());
 
     otCliInit(aInstance, CliUartOutput, aInstance);
+}
+
+extern "C" void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback)
+{
+    sRxLength   = 0;
+    sTxHead     = 0;
+    sTxLength   = 0;
+    sSendLength = 0;
+
+    IgnoreError(otPlatUartEnable());
+
+    otCliInit(aInstance, aCallback, aInstance);
 }

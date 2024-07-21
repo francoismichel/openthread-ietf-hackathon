@@ -33,6 +33,7 @@
 #include <sys/prctl.h>
 #endif
 
+#include <stdio.h>
 #include <openthread-core-config.h>
 #include <openthread/config.h>
 
@@ -120,7 +121,7 @@ typedef struct endpoint_state
     size_t                  fin_sent;
     size_t                  bytes_available;
     otTcpCircularSendBuffer send_buffer;
-    uint8_t                 internal_send_buffer[128];
+    uint8_t                 internal_send_buffer[1024];
     uint8_t                 _PADDING[128];
     uint8_t                 internal_receive_buffer[128];
 } endpoint_state_t;
@@ -140,21 +141,44 @@ void tcp_send_done_callback(otTcpEndpoint *endpoint, otLinkedBuffer *buffer)
     // NOOP
 }
 
+int find_newline(const uint8_t *buffer, size_t bufsize) {
+    for (int i = 0 ; i < bufsize ; i++) {
+        if (buffer[i] == '\r' || buffer[i] == '\n') {
+            return i;
+        }
+    }
+    return -1;
+}
+
+uint8_t tmp[1024];
+
 void read_and_echo_bytes(otTcpEndpoint *endpoint)
 {
     const otLinkedBuffer *buffer  = NULL;
     size_t                written = 0;
     endpoint_state_t     *context = (endpoint_state_t *)endpoint->mContext;
-    // otTcpReceiveContiguify(endpoint);
+    otTcpReceiveContiguify(endpoint);
     otTcpReceiveByReference(endpoint, &buffer);
 
-    otCliOutputFormat("received %d bytes: %.*s\r\n", buffer->mLength, buffer->mLength, buffer->mData);
+    // find newline
+    int newline_index = find_newline(buffer->mData, buffer->mLength);
+    if (newline_index != -1) {
+        memcpy(&tmp, buffer->mData, newline_index + 1);
+        tmp[newline_index] = '\0';
+        otCliInputLine(tmp);
+        otTcpCommitReceive(endpoint, newline_index + 1, 0);
+        if (context->fin_received && written == context->bytes_available)
+        {
+            // TODO: end of stream is sent before the actual returned output data are received from the cli
+            otTcpSendEndOfStream(endpoint);
+            context->fin_sent = true;
+        }
+    }
 
     // otCliOutputFormat("before, cicrular buffer free size = %d, contains %d bytes, start: %d: %.*s\r\n",
     //                     otTcpCircularSendBufferGetFreeSpace(&context->send_buffer),
     //                     context->send_buffer.mCapacityUsed, context->send_buffer.mStartIndex,
     //                     context->send_buffer.mCapacityUsed, context->send_buffer.mDataBuffer);
-    otTcpCircularSendBufferWrite(endpoint, &context->send_buffer, buffer->mData, buffer->mLength, &written, 0);
     // otError err = otTcpCircularSendBufferWrite(endpoint, &context->send_buffer, "hello", strlen("hello"), &written,
     // 0);
 
@@ -162,12 +186,6 @@ void read_and_echo_bytes(otTcpEndpoint *endpoint)
     //                     otTcpCircularSendBufferGetFreeSpace(&context->send_buffer),
     //                     context->send_buffer.mCapacityUsed, context->send_buffer.mStartIndex,
     //                     context->send_buffer.mCapacityUsed, context->send_buffer.mDataBuffer);
-    if (context->fin_received && written == context->bytes_available)
-    {
-        otTcpSendEndOfStream(endpoint);
-        context->fin_sent = true;
-    }
-    otTcpCommitReceive(endpoint, written, 0);
 }
 
 void tcp_forward_progress(otTcpEndpoint *endpoint, size_t aInSendBuffer, size_t aBacklog)
@@ -186,7 +204,6 @@ void tcp_receive_available(otTcpEndpoint *endpoint, size_t bytes_available, bool
     endpoint_state_t *context = (endpoint_state_t *)endpoint->mContext;
     context->bytes_available  = bytes_available;
     context->fin_received     = fin;
-    otCliOutputFormat("receive available\r\n");
     read_and_echo_bytes(endpoint);
 }
 
@@ -233,7 +250,6 @@ otTcpIncomingConnectionAction acceptReady(otTcpListener    *aListener,
 void acceptDone(otTcpListener *aListener, otTcpEndpoint *aEndpoint, const otSockAddr *aPeer)
 {
     // nothing to do, we implement echo
-    otCliOutputFormat("accept done\r\n");
 }
 
 /**
@@ -258,6 +274,17 @@ void initTcp(otInstance *aInstance)
         // TODO
     }
     otTcpListen(&tcpListener, &listenSockAddr);
+}
+int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments);
+void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback);
+int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
+{   
+    for (int i = 0 ; i < n_endpoints ; i++) {
+        endpoint_state_t *context = &endpoints_states[i];
+        size_t written = vsprintf(tmp, aFormat, aArguments);
+        otTcpCircularSendBufferWrite(&endpoints[i], &context->send_buffer, tmp, written, &written, 0);
+    }
+    return CliUartOutput(aContext, aFormat, aArguments);
 }
 
 int main(int argc, char *argv[])
@@ -294,8 +321,10 @@ pseudo_reset:
 #endif
     assert(instance);
 
-    otAppCliInit(instance);
+    // otAppCliInit(instance);
+    otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
+    
 
 #if OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     IgnoreError(otCliSetUserCommands(kCommands, OT_ARRAY_LENGTH(kCommands), instance));
