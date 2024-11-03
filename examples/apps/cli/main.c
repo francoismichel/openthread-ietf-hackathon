@@ -377,7 +377,10 @@ bool service_registered = false;
             //     otCliOutputFormat("could not setup the device's host name\n");
             //     return;
             // }
-            err = otSrpClientSetHostName(instance, instance_name);
+
+            size_t instance_name_prefix_len = strlen(instance_name_prefix);
+            char *instance_name_hex = &instance_name[instance_name_prefix_len];
+            err = otSrpClientSetHostName(instance, instance_name_hex);
 
             entry.mKey = "mock-arbitrary-key";
             entry.mValue = NULL;
