@@ -59,6 +59,8 @@
 
 #define TCP_PORT 4443
 
+#define OPENTHREAD_FTD 1
+
 char hex_lookup[16] = {
     '0',
     '1',
@@ -78,7 +80,7 @@ char hex_lookup[16] = {
     'F',
 };
 
-size_t bytes_to_hex_string(const char *bytes, size_t bytes_length, char *output, size_t output_length) {
+size_t bytes_to_hex_string(char *output, size_t output_length, const char *bytes, size_t bytes_length) {
     if (output_length < bytes_length * 2 + 1) {
         otCliOutputFormat("bad hex buffer size\n");
         return 0;
@@ -336,7 +338,8 @@ char server_ipv6_addr_str[256];
 // char instance_name[128];
 // char host_name[128];
 otExtAddress instance_eui;
-char instance_id_hex[2 * sizeof(otExtAddress) + 1];
+char instance_name_prefix[128] = "my instance name - ";
+char instance_name[sizeof(instance_name_prefix) + 2 * sizeof(otExtAddress)]; // space to store the name prefix and the hex-encoded EUI64
 int server_port;
 otSrpClientService service;
 otDnsTxtEntry entry;
@@ -374,12 +377,12 @@ bool service_registered = false;
             //     otCliOutputFormat("could not setup the device's host name\n");
             //     return;
             // }
-            err = otSrpClientSetHostName(instance, instance_id_hex);
+            err = otSrpClientSetHostName(instance, instance_name);
 
             entry.mKey = "mock-arbitrary-key";
             entry.mValue = NULL;
             entry.mValueLength = 0;
-            service.mInstanceName = instance_id_hex;
+            service.mInstanceName = instance_name;
             service.mName = "_unsecure-cli._tcp";
             service.mPort = TCP_PORT;
             service.mTxtEntries = &entry;
@@ -443,8 +446,11 @@ pseudo_reset:
 
 
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
+    strncpy(instance_name, instance_name_prefix, sizeof(instance_name_prefix) - 1);
+    size_t instance_name_prefix_len = strlen(instance_name_prefix);
+    char *instance_name_hex = &instance_name[instance_name_prefix_len];
     otLinkGetFactoryAssignedIeeeEui64(instance, &instance_eui);
-    bytes_to_hex_string(instance_eui.m8, sizeof(instance_eui.m8), instance_id_hex, sizeof(instance_id_hex));
+    bytes_to_hex_string(instance_name_hex, sizeof(instance_name) - instance_name_prefix_len, instance_eui.m8, sizeof(instance_eui.m8));
     otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
