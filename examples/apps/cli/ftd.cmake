@@ -37,6 +37,8 @@ if(NOT DEFINED OT_PLATFORM_LIB_FTD)
     set(OT_PLATFORM_LIB_FTD ${OT_PLATFORM_LIB})
 endif()
 
+target_compile_definitions(ot-cli-ftd PUBLIC OPENTHREAD_FTD=1)
+
 target_link_libraries(ot-cli-ftd PRIVATE
     openthread-cli-ftd
     ${OT_PLATFORM_LIB_FTD}

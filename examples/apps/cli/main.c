@@ -334,6 +334,13 @@ pseudo_reset:
     IgnoreError(otPlatLogCrashDump());
 #endif
 
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
+    otError error = otIp6SetEnabled(instance, true);
+    assert(error == OT_ERROR_NONE);
+    error = otThreadSetEnabled(instance, true);
+    assert(error == OT_ERROR_NONE);
+#endif // OPENTHREAD_FTD || OPENTHREAD_MTD
+
     while (!otSysPseudoResetWasRequested())
     {
         otTaskletsProcess(instance);
