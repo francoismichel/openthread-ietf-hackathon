@@ -450,14 +450,16 @@ pseudo_reset:
 #endif
     assert(instance);
 
-    otAppCliInit(instance);
-    // otAppCliInitWithCallback(instance, &OutputCallback);
+
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
+    otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
     if (err != OT_ERROR_NONE) {
         fprintf(out, "could set state changed callback: %d\n", err);
     }
+#else
+    otAppCliInit(instance);
 #endif
 
 #if OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
