@@ -49,6 +49,7 @@
 #include <openthread/platform/misc.h>
 #include <openthread/srp_client.h>
 #include <openthread/random_crypto.h>
+#include <openthread/link.h>
 
 #include "openthread-system.h"
 #include "cli/cli_config.h"
@@ -334,25 +335,15 @@ int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
 char server_ipv6_addr_str[256];
 // char instance_name[128];
 // char host_name[128];
-char instance_id[8];
-char instance_id_hex[256];
+otExtAddress instance_eui;
+char instance_id_hex[2 * sizeof(otExtAddress) + 1];
 int server_port;
 otSrpClientService service;
 otDnsTxtEntry entry;
 FILE *out;
-bool id_generated = false;
 bool service_registered = false;
 
  void on_thread_state_changed(otChangedFlags aFlags, void *aContext) {
-    if (!id_generated) {
-        otError err = otRandomCryptoFillBuffer(instance_id, sizeof(instance_id));
-        if (err != OT_ERROR_NONE) {
-            otCliOutputFormat("error when generating instance ID ! error = %d\r\n", err);
-        } else {
-            bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
-            id_generated = true;
-        }
-    }
     otInstance *instance = (otInstance *) aContext;
     otCliOutputFormat("state changed: %d!\n", aFlags);
     if (aFlags & OT_CHANGED_THREAD_ROLE) {
@@ -452,6 +443,8 @@ pseudo_reset:
 
 
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
+    otLinkGetFactoryAssignedIeeeEui64(instance, &instance_eui);
+    bytes_to_hex_string(instance_eui->m8, sizeof(instance_eui->m8), instance_id_hex, sizeof(instance_id_hex));
     otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
