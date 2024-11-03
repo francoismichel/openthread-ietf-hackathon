@@ -414,7 +414,7 @@ int main(int argc, char *argv[])
     prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
-    otRandomCryptoFillBuffer(&instance_id, sizeof(instance_id));
+    otRandomCryptoFillBuffer(instance_id, sizeof(instance_id));
     bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
     OT_SETUP_RESET_JUMP(argv);
 #endif
