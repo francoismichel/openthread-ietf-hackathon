@@ -322,6 +322,7 @@ int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
     return CliUartOutput(aContext, aFormat, aArguments);
 }
 
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
 char server_ipv6_addr_str[256];
 // char instance_name[128];
 // char host_name[128];
@@ -394,6 +395,7 @@ FILE *out;
         }
     }
  }
+ #endif
 
 
 int main(int argc, char *argv[])
@@ -403,10 +405,11 @@ int main(int argc, char *argv[])
     // parent process dies.
     prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
     otRandomCryptoFillBuffer(&instance_id, sizeof(instance_id));
     bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
     OT_SETUP_RESET_JUMP(argv);
-
+#endif
 #if OPENTHREAD_CONFIG_MULTIPLE_INSTANCE_ENABLE
     size_t   otInstanceBufferLength = 0;
     uint8_t *otInstanceBuffer       = NULL;
@@ -433,11 +436,13 @@ pseudo_reset:
 
     // otAppCliInit(instance);
     otAppCliInitWithCallback(instance, &OutputCallback);
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
     if (err != OT_ERROR_NONE) {
         fprintf(out, "could set state changed callback: %d\n", err);
     }
+#endif
 
 #if OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     IgnoreError(otCliSetUserCommands(kCommands, OT_ARRAY_LENGTH(kCommands), instance));
