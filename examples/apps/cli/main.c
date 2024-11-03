@@ -335,13 +335,23 @@ char server_ipv6_addr_str[256];
 // char instance_name[128];
 // char host_name[128];
 char instance_id[8];
-char instance_id_hex[17];
+char instance_id_hex[256];
 int server_port;
 otSrpClientService service;
 otDnsTxtEntry entry;
 FILE *out;
+bool id_generated = false;
 
  void on_thread_state_changed(otChangedFlags aFlags, void *aContext) {
+    if (!id_generated) {
+        otError err = otRandomCryptoFillBuffer(instance_id, sizeof(instance_id));
+        if (err != OT_ERROR_NONE) {
+            otCliOutputFormat("error when generating instance ID ! error = %d\r\n", err);
+        } else {
+            bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
+            id_generated = true;
+        }
+    }
     otInstance *instance = (otInstance *) aContext;
     otCliOutputFormat("state changed: %d!\n", aFlags);
     if (aFlags & OT_CHANGED_THREAD_ROLE) {
@@ -413,11 +423,7 @@ int main(int argc, char *argv[])
     // parent process dies.
     prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
-#if OPENTHREAD_FTD || OPENTHREAD_MTD
-    otRandomCryptoFillBuffer(instance_id, sizeof(instance_id));
-    bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
     OT_SETUP_RESET_JUMP(argv);
-#endif
 #if OPENTHREAD_CONFIG_MULTIPLE_INSTANCE_ENABLE
     size_t   otInstanceBufferLength = 0;
     uint8_t *otInstanceBuffer       = NULL;
