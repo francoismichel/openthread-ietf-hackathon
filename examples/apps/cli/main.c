@@ -155,7 +155,10 @@ typedef struct endpoint_state
     size_t                  fin_received;
     size_t                  fin_sent;
     size_t                  bytes_available;
+
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
     otTcpCircularSendBuffer send_buffer;
+#endif
     uint8_t                 internal_send_buffer[1024];
     uint8_t                 _PADDING[128];
     uint8_t                 internal_receive_buffer[128];
