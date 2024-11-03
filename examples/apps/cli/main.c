@@ -47,12 +47,47 @@
 #include <openthread/thread_ftd.h>
 #include <openthread/platform/logging.h>
 #include <openthread/platform/misc.h>
+#include <openthread/srp_client.h>
+#include <openthread/random_crypto.h>
 
 #include "openthread-system.h"
 #include "cli/cli_config.h"
 #include "common/code_utils.hpp"
 
 #include "lib/platform/reset_util.h"
+
+char hex_lookup[16] = {
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    'A',
+    'B',
+    'C',
+    'D',
+    'E',
+    'F',
+};
+
+size_t bytes_to_hex_string(const char *bytes, size_t bytes_length, char *output, size_t output_length) {
+    if (output_length < bytes_length * 2 + 1) {
+        otCliOutputFormat("bad hex buffer size\n");
+        return 0;
+    }
+    size_t output_index = 0;
+    for (int i = 0 ; i < bytes_length ; i++) {
+        output[output_index++] = hex_lookup[bytes[i] >> 4];
+        output[output_index++] = hex_lookup[bytes[i] & 0xF];
+    }
+    output[output_index] = '\0';
+    return output_index;
+}
 
 void handleNetifStateChanged(uint32_t aFlags, void *aContext);
 
@@ -287,6 +322,80 @@ int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
     return CliUartOutput(aContext, aFormat, aArguments);
 }
 
+char server_ipv6_addr_str[256];
+// char instance_name[128];
+// char host_name[128];
+char instance_id[8];
+char instance_id_hex[17];
+int server_port;
+otSrpClientService service;
+otDnsTxtEntry entry;
+FILE *out;
+
+ void on_thread_state_changed(otChangedFlags aFlags, void *aContext) {
+    otInstance *instance = (otInstance *) aContext;
+    otCliOutputFormat("state changed: %d!\n", aFlags);
+    if (aFlags & OT_CHANGED_THREAD_ROLE) {
+        // otCliOutputFormat("role changed: %d!\n", aFlags);
+        otSrpClientStop(instance);
+        otDeviceRole role = otThreadGetDeviceRole(instance);
+        otCliOutputFormat("role = %d!\n", role);
+        // fflush(out);
+        if (role == OT_DEVICE_ROLE_CHILD || role == OT_DEVICE_ROLE_ROUTER || role == OT_DEVICE_ROLE_LEADER) {
+            // if there's at least one arg, register the service
+            // int pid = getpid();
+            // int n = snprintf(instance_name, sizeof(instance_name), "mock-service-instance-%d", pid);
+            // if (n >= sizeof(instance_name)) {
+            //     otCliOutputFormat("could not setup the device's instance name\n");
+            //     return;
+            // }
+
+            // automatically choose the host address to announce through SRP (probably
+            // mesh-local or ULA if there is one)
+            otError err = otSrpClientEnableAutoHostAddress(instance);
+            if (err != OT_ERROR_NONE) {
+                otCliOutputFormat("could not enable client's auto host address: %d\n", err);
+                return;
+            }
+
+            // n = snprintf(host_name, sizeof(host_name), "mock-service-%d", pid);
+            // if (n >= sizeof(host_name)) {
+            //     otCliOutputFormat("could not setup the device's host name\n");
+            //     return;
+            // }
+            err = otSrpClientSetHostName(instance, instance_id_hex);
+
+            entry.mKey = "mock";
+            entry.mValue = NULL;
+            entry.mValueLength = 0;
+            service.mInstanceName = instance_id_hex;
+            service.mName = "_unsecure-cli._tcp";
+            service.mPort = 4000;
+            service.mTxtEntries = &entry;
+            service.mNumTxtEntries = 1;
+            err = otSrpClientAddService(instance, &service);
+            if (err != OT_ERROR_NONE) {
+                otCliOutputFormat("could not add client service: %d\n", err);
+                return;
+            }
+            otSrpClientEnableAutoStartMode(instance, NULL, NULL);
+            // otSockAddr server_addr;
+            // err = otIp6AddressFromString(server_ipv6_addr_str, &server_addr.mAddress);
+            // if (err != OT_ERROR_NONE) {
+            //     otCliOutputFormat("could not parse the server IP address: %d\n", err);
+            //     return;
+            // }
+            // server_addr.mPort = server_port;
+            // err = otSrpClientStart(instance, &server_addr);
+            // if (err != OT_ERROR_NONE) {
+            //     otCliOutputFormat("could not start the SRP client: %d\n", err);
+            //     return;
+            // }
+        }
+    }
+ }
+
+
 int main(int argc, char *argv[])
 {
 #ifdef __linux__
@@ -294,7 +403,8 @@ int main(int argc, char *argv[])
     // parent process dies.
     prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
-
+    otRandomCryptoFillBuffer(&instance_id, sizeof(instance_id));
+    bytes_to_hex_string(instance_id, sizeof(instance_id), instance_id_hex, sizeof(instance_id_hex));
     OT_SETUP_RESET_JUMP(argv);
 
 #if OPENTHREAD_CONFIG_MULTIPLE_INSTANCE_ENABLE
@@ -324,7 +434,10 @@ pseudo_reset:
     // otAppCliInit(instance);
     otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
-    
+    otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
+    if (err != OT_ERROR_NONE) {
+        fprintf(out, "could set state changed callback: %d\n", err);
+    }
 
 #if OPENTHREAD_POSIX && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     IgnoreError(otCliSetUserCommands(kCommands, OT_ARRAY_LENGTH(kCommands), instance));
