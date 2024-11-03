@@ -56,6 +56,8 @@
 
 #include "lib/platform/reset_util.h"
 
+#define TCP_PORT 4443
+
 char hex_lookup[16] = {
     '0',
     '1',
@@ -252,8 +254,6 @@ void tcp_disconnected(otTcpEndpoint *endpoint, otTcpDisconnectedReason reason)
     // TODO
 }
 
-#define TCP_PORT 4443
-
 otTcpIncomingConnectionAction acceptReady(otTcpListener    *aListener,
                                           const otSockAddr *aPeer,
                                           otTcpEndpoint   **aAcceptInto)
@@ -316,19 +316,19 @@ void initTcp(otInstance *aInstance)
     otTcpListen(&tcpListener, &listenSockAddr);
 }
 
+int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments);
+void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback);
+int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
+{   
+    for (int i = 0 ; i < n_endpoints ; i++) {
+        endpoint_state_t *context = &endpoints_states[i];
+        size_t written = vsprintf(tmp, aFormat, aArguments);
+        otTcpCircularSendBufferWrite(&endpoints[i], &context->send_buffer, tmp, written, &written, 0);
+    }
+    return CliUartOutput(aContext, aFormat, aArguments);
+}
 #endif //OPENTHREAD_FTD || OPENTHREAD_MTD
 
-// int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments);
-// void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback);
-// int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
-// {   
-//     for (int i = 0 ; i < n_endpoints ; i++) {
-//         endpoint_state_t *context = &endpoints_states[i];
-//         size_t written = vsprintf(tmp, aFormat, aArguments);
-//         otTcpCircularSendBufferWrite(&endpoints[i], &context->send_buffer, tmp, written, &written, 0);
-//     }
-//     return CliUartOutput(aContext, aFormat, aArguments);
-// }
 
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
 char server_ipv6_addr_str[256];
@@ -341,6 +341,7 @@ otSrpClientService service;
 otDnsTxtEntry entry;
 FILE *out;
 bool id_generated = false;
+bool service_registered = false;
 
  void on_thread_state_changed(otChangedFlags aFlags, void *aContext) {
     if (!id_generated) {
@@ -360,7 +361,7 @@ bool id_generated = false;
         otDeviceRole role = otThreadGetDeviceRole(instance);
         otCliOutputFormat("role = %d!\n", role);
         // fflush(out);
-        if (role == OT_DEVICE_ROLE_CHILD || role == OT_DEVICE_ROLE_ROUTER || role == OT_DEVICE_ROLE_LEADER) {
+        if (!service_registered && role == OT_DEVICE_ROLE_CHILD || role == OT_DEVICE_ROLE_ROUTER || role == OT_DEVICE_ROLE_LEADER) {
             // if there's at least one arg, register the service
             // int pid = getpid();
             // int n = snprintf(instance_name, sizeof(instance_name), "mock-service-instance-%d", pid);
@@ -384,12 +385,12 @@ bool id_generated = false;
             // }
             err = otSrpClientSetHostName(instance, instance_id_hex);
 
-            entry.mKey = "mock";
+            entry.mKey = "mock-arbitrary-key";
             entry.mValue = NULL;
             entry.mValueLength = 0;
             service.mInstanceName = instance_id_hex;
             service.mName = "_unsecure-cli._tcp";
-            service.mPort = 4000;
+            service.mPort = TCP_PORT;
             service.mTxtEntries = &entry;
             service.mNumTxtEntries = 1;
             err = otSrpClientAddService(instance, &service);
@@ -398,6 +399,7 @@ bool id_generated = false;
                 return;
             }
             otSrpClientEnableAutoStartMode(instance, NULL, NULL);
+            service_registered = true;
             // otSockAddr server_addr;
             // err = otIp6AddressFromString(server_ipv6_addr_str, &server_addr.mAddress);
             // if (err != OT_ERROR_NONE) {
