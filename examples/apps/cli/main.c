@@ -165,6 +165,8 @@ typedef struct endpoint_state
 } endpoint_state_t;
 
 endpoint_state_t            endpoints_states[10];
+
+#if OPENTHREAD_FTD || OPENTHREAD_MTD
 otTcpEndpointInitializeArgs endpoints_args[10];
 
 otTcpListenerInitializeArgs listenerArgs;
@@ -313,17 +315,20 @@ void initTcp(otInstance *aInstance)
     }
     otTcpListen(&tcpListener, &listenSockAddr);
 }
-int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments);
-void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback);
-int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
-{   
-    for (int i = 0 ; i < n_endpoints ; i++) {
-        endpoint_state_t *context = &endpoints_states[i];
-        size_t written = vsprintf(tmp, aFormat, aArguments);
-        otTcpCircularSendBufferWrite(&endpoints[i], &context->send_buffer, tmp, written, &written, 0);
-    }
-    return CliUartOutput(aContext, aFormat, aArguments);
-}
+
+#endif //OPENTHREAD_FTD || OPENTHREAD_MTD
+
+// int CliUartOutput(void *aContext, const char *aFormat, va_list aArguments);
+// void otAppCliInitWithCallback(otInstance *aInstance, otCliOutputCallback aCallback);
+// int OutputCallback(void *aContext, const char *aFormat, va_list aArguments)
+// {   
+//     for (int i = 0 ; i < n_endpoints ; i++) {
+//         endpoint_state_t *context = &endpoints_states[i];
+//         size_t written = vsprintf(tmp, aFormat, aArguments);
+//         otTcpCircularSendBufferWrite(&endpoints[i], &context->send_buffer, tmp, written, &written, 0);
+//     }
+//     return CliUartOutput(aContext, aFormat, aArguments);
+// }
 
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
 char server_ipv6_addr_str[256];
@@ -437,8 +442,8 @@ pseudo_reset:
 #endif
     assert(instance);
 
-    // otAppCliInit(instance);
-    otAppCliInitWithCallback(instance, &OutputCallback);
+    otAppCliInit(instance);
+    // otAppCliInitWithCallback(instance, &OutputCallback);
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
