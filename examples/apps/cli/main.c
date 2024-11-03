@@ -444,7 +444,7 @@ pseudo_reset:
 
 #if OPENTHREAD_FTD || OPENTHREAD_MTD
     otLinkGetFactoryAssignedIeeeEui64(instance, &instance_eui);
-    bytes_to_hex_string(instance_eui->m8, sizeof(instance_eui->m8), instance_id_hex, sizeof(instance_id_hex));
+    bytes_to_hex_string(instance_eui.m8, sizeof(instance_eui.m8), instance_id_hex, sizeof(instance_id_hex));
     otAppCliInitWithCallback(instance, &OutputCallback);
     initTcp(instance);
     otError err = otSetStateChangedCallback(instance, on_thread_state_changed, instance);
